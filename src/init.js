@@ -346,9 +346,6 @@ const init = async (projectName, option) => {
 
   const { host, port, username, password, localFilePath, remoteFilePath, install } = result;
 
-  console.log(result, _install)
-  return
-
   // 判断是否时服务端项目
   if (publishConfig?.porjectInfo[projectName]?.isServer) {
     await onCompressServiceFile(localFilePath || _localFilePath)
