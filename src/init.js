@@ -7,9 +7,23 @@ const archiver = require('archiver');
 const chalk = require('chalk');
 const ora = require('ora');
 const { beautyLog } = require('./utils')
-const publishConfig = require('../publish.config')
+// const publishConfig = require('../publish.config')
 
 const ssh = new NodeSSH();
+
+const getPublishConfig = () => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const config = require(`${process.cwd()}/publish.config.js`);
+    return config;
+  } catch (error) {
+    console.log(
+      beautyLog.warning,
+      chalk.yellowBright('当前项目根目录下未配置 publish.config.js 文件，需要手动输入配置信息')
+    );
+    return null;
+  }
+};
 
 // 压缩dist
 const onCompressFile = async (localFilePath) => {
@@ -78,25 +92,30 @@ const onCompressServiceFile = async (localFilePath) => {
 
 // 上传文件
 const onPutFile = async (localFilePath, remoteFilePath) => {
-  const progressBar = new cliProgress.SingleBar({
-    format: '文件上传中: {bar} | {percentage}% | ETA: {eta}s | {value}MB / {total}MB',
-    barCompleteChar: '\u2588',
-    barIncompleteChar: '\u2591',
-    hideCursor: true
-  });
-  const localFile = path.resolve(__dirname, `${localFilePath}/dist.zip`);
-  const remotePath = path.join(remoteFilePath, path.basename(localFile));
-  const stats = fs.statSync(localFile);
-  const fileSize = stats.size;
-  progressBar.start(Math.ceil(fileSize / 1024 / 1024), 0);
-  await ssh.putFile(localFile, remotePath, null, {
-    concurrency: 10, // 控制上传的并发数
-    chunkSize: 16384, // 指定每个数据块的大小，适应慢速连接 16kb
-    step: (totalTransferred, chunk, total) => {
-      progressBar.update(Math.ceil(totalTransferred / 1024 / 1024));
-    }
-  });
-  progressBar.stop();
+  try {
+    const progressBar = new cliProgress.SingleBar({
+      format: '文件上传中: {bar} | {percentage}% | ETA: {eta}s | {value}MB / {total}MB',
+      barCompleteChar: '\u2588',
+      barIncompleteChar: '\u2591',
+      hideCursor: true
+    });
+    const localFile = path.resolve(__dirname, `${localFilePath}/dist.zip`);
+    const remotePath = path.join(remoteFilePath, path.basename(localFile));
+    const stats = fs.statSync(localFile);
+    const fileSize = stats.size;
+    progressBar.start(Math.ceil(fileSize / 1024 / 1024), 0);
+    await ssh.putFile(localFile, remotePath, null, {
+      concurrency: 10, // 控制上传的并发数
+      chunkSize: 16384, // 指定每个数据块的大小，适应慢速连接 16kb
+      step: (totalTransferred) => {
+        progressBar.update(Math.ceil(totalTransferred / 1024 / 1024));
+      }
+    });
+    progressBar.stop();
+  } catch (error) {
+    console.log(beautyLog.error, `上传文件失败: ${error}`);
+    process.exit(1);
+  }
 }
 
 // 删除文件
@@ -110,6 +129,7 @@ const onDeleteFile = async (localFile) => {
   } catch (err) {
     console.log(beautyLog.error, chalk.red(`Failed to delete dist folder: ${err}`));
     spinner.fail(chalk.redBright(`删除文件: ${chalk.cyan(`${localFile}`)} 失败`));
+    process.exit(1);
   }
 }
 
@@ -132,6 +152,7 @@ const onRemoveFile = async (localFile) => {
       console.error(chalk.red(`Failed to delete file ${localFile}: ${err}`));
       spinner.fail(chalk.redBright(`删除文件: ${chalk.cyan(localFile)} 失败`));
       reject(err);
+      process.exit(1);
     }
   })
 };
@@ -148,6 +169,7 @@ const onUnzipZip = async (remotePath) => {
   } catch (err) {
     console.log(beautyLog.error, chalk.red(`Failed to unzip dist.zip: ${err}`));
     spinner.fail(chalk.redBright(`解压文件: ${chalk.cyan(`${remotePath}/dist.zip`)} 失败`));
+    process.exit(1);
   }
 }
 
@@ -204,6 +226,7 @@ const onConnectServer = async ({ host, port, username, password }) => {
     });
   } catch (err) {
     console.log(beautyLog.error, chalk.red(`连接服务器失败: ${err}`));
+    process.exit(1);
   }
 }
 // 连接服务器并上传文件
@@ -222,8 +245,8 @@ const onPublish = async ({ username, host, port, password, localFilePath, remote
     if (install) {
       await onInstall(remoteFilePath);
     }
-    if (projectName === 'blogServerWeb') {
-      projectName === 'blogServerWeb' && await onRestartServer(remoteFilePath, install);
+    if (config.porjectInfo[projectName].isServer) {
+      await onRestartServer(remoteFilePath, install);
     }
     console.log(beautyLog.success, chalk.greenBright(chalk.bgCyan(` 🎉 🎉 🎉 ${projectName} 项目部署成功!!! 🎉 🎉 🎉 \n`)));
   } catch (err) {
@@ -246,44 +269,72 @@ const init = async (projectName, option) => {
     install: _install
   } = option;
 
+  const publishConfig = getPublishConfig();
+
+  const getRemoteFilePath = () => {
+    if (publishConfig?.porjectInfo[projectName]) {
+      return publishConfig?.porjectInfo[projectName]?.remoteFilePath;
+    } else {
+      // console.log(beautyLog.warning, chalk.yellowBright(`未找到项目 ${projectName} 的配置信息`));
+      return '';
+    }
+  };
+
+  const getInstallStatus = (isServer) => {
+    return !!(_install || (publishConfig ? !publishConfig?.porjectInfo[projectName]?.isServer : !isServer))
+  }
+
   try {
     result = await prompts([{
       name: 'host',
       type: _host ? null : 'text',
       message: 'host:',
-      initial: '101.43.50.15'
+      initial: publishConfig?.serverInfo?.host || '',
+      validate: value => value ? true : '请输入host'
     }, {
       name: 'port',
       type: _port ? null : 'text',
       message: '端口号:',
-      initial: 22,
+      initial: publishConfig?.serverInfo?.port || '',
+      validate: value => value ? true : '请输入端口号'
     }, {
       name: 'localFilePath',
       type: _localFilePath ? null : 'text',
       message: '本地项目文件路径:',
       initial: process.cwd(),
+      validate: value => value ? true : '请输入本地项目文件路径'
     }, {
       name: 'remoteFilePath',
       type: _remoteFilePath ? null : 'text',
       message: '目标服务器项目文件路径:',
-      initial: publishConfig[projectName].remoteFilePath,
+      initial: getRemoteFilePath() || '',
+      validate: (value) => (value ? true : '请输入目标服务器项目文件路径')
     }, {
-      name: 'install',
-      type: _install || projectName !== 'blogServerWeb' ? null : 'toggle',
-      message: '是否安装依赖:',
+      name: 'isServer',
+      type: _install || getRemoteFilePath() ? null : 'toggle',
+      message: '是否是后台服务:',
       initial: false,
       active: 'yes',
       inactive: 'no'
     }, {
+      name: 'install',
+      type: (_, values) => getInstallStatus(values.isServer) ? null : 'toggle',
+      message: '是否安装依赖:',
+      initial: false,
+      active: 'yes',
+      inactive: 'no',
+    }, {
       name: 'username',
       type: _username ? null : 'text',
       message: '用户名称:',
-      initial: 'root'
+      initial: publishConfig?.serverInfo?.username || '',
+      validate: value => value ? true : '请输入用户名称'
     }, {
       name: 'password',
       type: _password ? null : 'password',
       message: '密码:',
-      initial: 'dnh@06130614'
+      initial: '',
+      validate: value => value ? true : '请输入密码'
     }], {
       onCancel: () => {
         throw new Error('User cancelled');
@@ -295,8 +346,11 @@ const init = async (projectName, option) => {
 
   const { host, port, username, password, localFilePath, remoteFilePath, install } = result;
 
+  console.log(result, _install)
+  return
+
   // 判断是否时服务端项目
-  if (projectName === 'blogServerWeb') {
+  if (publishConfig?.porjectInfo[projectName]?.isServer) {
     await onCompressServiceFile(localFilePath || _localFilePath)
   } else {
     await onCompressFile(localFilePath || _localFilePath)
