@@ -1,5 +1,8 @@
-
+const path = require("path");
+const fs = require("fs");
 const chalk = require("chalk");
+const prompts = require("prompts");
+const ora = require('ora');
 
 const isUnicodeSupported = () => {
   // 操作系统平台是否为 win32（Windows）
@@ -60,7 +63,175 @@ const updateVersion = (version) => {
   return `${major}.${minor}.${patch}`;
 };
 
+// 校验文件是否存在
+const verifyFile = (path) => {
+  return fs.existsSync(path);
+};
+
+
+const getPublishConfig = () => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const config = require(`${process.cwd()}/publish.config.js`);
+    return config;
+  } catch (error) {
+    console.log(
+      beautyLog.warning,
+      chalk.yellowBright('当前项目根目录下未配置 publish.config.js 文件，需要手动输入配置信息')
+    );
+    return null;
+  }
+};
+
+// 连接服务器
+const onConnectServer = async ({ host, port, username, password, ssh }) => {
+  try {
+    // 连接到服务器
+    await ssh.connect({
+      host,
+      username,
+      port,
+      password,
+      tryKeyboard: true,
+    });
+  } catch (err) {
+    console.log(beautyLog.error, chalk.red(`连接服务器失败: ${err}`));
+    process.exit(1);
+  }
+}
+
+// 获取配置信息
+const getConfigServerInfo = (publishConfig, field) => {
+  if (publishConfig?.serverInfo?.[field]) {
+    return publishConfig?.serverInfo?.[field];
+  } else {
+    console.log('\n' + beautyLog.warning, chalk.yellowBright(`未找到项目 ${chalk.cyan(field)} 的配置信息，请手动输入!\n`));
+    return undefined;
+  }
+}
+
+// 获取配置信息
+const getConfigFilePath = (publishConfig, projectName, field) => {
+  const value = publishConfig?.porjectInfo[projectName]?.[field];
+  if (field === 'isServer' && value !== undefined) {
+    return value;
+  } else if (value) {
+    return value;
+  } else {
+    console.log('\n' + beautyLog.warning, chalk.yellowBright(`未找到项目 ${chalk.cyan(field)} 的配置信息，请手动输入!\n`));
+    return undefined;
+  }
+};
+
+// 收集服务器信息
+const onCollectServerInfo = async ({ host, port, username, password, publishConfig }) => {
+  try {
+    result = await prompts([{
+      name: 'host',
+      type: host || getConfigServerInfo(publishConfig, 'host') ? null : 'text',
+      message: 'host:',
+      initial: getConfigServerInfo(publishConfig, 'host') || '',
+      validate: value => value ? true : '请输入host'
+    }, {
+      name: 'port',
+      type: port || getConfigServerInfo(publishConfig, 'port') ? null : 'text',
+      message: '端口号:',
+      initial: getConfigServerInfo(publishConfig, 'port') || '',
+      validate: value => value ? true : '请输入端口号'
+    }, {
+      name: 'username',
+      type: username || getConfigServerInfo(publishConfig, 'username') ? null : 'text',
+      message: '用户名称:',
+      initial: getConfigServerInfo(publishConfig, 'username') || '',
+      validate: value => value ? true : '请输入用户名称'
+    }, {
+      name: 'password',
+      type: password ? null : 'password',
+      message: '密码:',
+      initial: '',
+      validate: value => value ? true : '请输入密码'
+    }], {
+      onCancel: () => {
+        throw new Error('User cancelled');
+      }
+    });
+    return result;
+  } catch (cancelled) {
+    process.exit(1);
+  }
+}
+
+// 删除本地文件
+const onRemoveFile = async (localFile) => {
+  const spinner = ora({
+    text: chalk.yellowBright(`正在删除文件: ${chalk.cyan(localFile)}`),
+  }).start();
+  return new Promise((resolve, reject) => {
+    try {
+      const fullPath = path.resolve(localFile);
+      // 删除文件
+      fs.unlink(fullPath, (err) => {
+        if (err === null) {
+          spinner.succeed(chalk.greenBright(`删除文件: ${chalk.cyan(localFile)} 成功\n`));
+          resolve(1);
+        }
+      });
+    } catch (err) {
+      console.error(chalk.red(`Failed to delete file ${localFile}: ${err}`));
+      spinner.fail(chalk.redBright(`删除文件: ${chalk.cyan(localFile)} 失败`));
+      reject(err);
+      process.exit(1);
+    }
+  })
+};
+
+// 重启 nginx 服务
+const onRestartNginx = async (publishConfig, ssh) => {
+  const spinner = ora({
+    text: chalk.yellowBright('正在推送 nginx.conf 文件到远程服务器并重启远程 nginx 服务'),
+  }).start();
+  try {
+    const { restartPath } = publishConfig.nginxInfo;
+    await ssh.execCommand(`cd ${restartPath} && ./nginx -s reload`);
+    spinner.succeed(chalk.greenBright(chalk.bold(` 🎉 🎉 🎉 nginx 服务重启成功: ${chalk.cyan(`${restartPath}`)}!!! 🎉 🎉 🎉 \n`)));
+  } catch (error) {
+    spinner.fail(chalk.redBright(`重启 nginx 服务失败: ${error}`));
+    process.exit(0);
+  }
+}
+
+// 重启后台项目
+const onRestartServer = async (remotePath, ssh) => {
+  const spinner = ora({
+    text: chalk.yellowBright(chalk.cyan('正在重启服务...')),
+  }).start();
+  try {
+    const { code: deleteCode, stderr: deleteStderr } = await ssh.execCommand('pm2 delete 0');
+    const { code: startCode, stderr: startStderr } = await ssh.execCommand(`pm2 start ${remotePath}/src/main.js`);
+    const { code: listCode, stdout } = await ssh.execCommand('pm2 list');
+    if (deleteCode === 0 && startCode === 0 && listCode === 0) {
+      spinner.succeed(chalk.greenBright(`服务启动成功: \n${stdout}\n`));
+      spinner.succeed(chalk.greenBright(chalk.bold(` 🎉 🎉 🎉 nginx 服务重启成功: ${chalk.cyan(`${remotePath}`)}!!! 🎉 🎉 🎉 \n`)));
+    } else {
+      spinner.fail(chalk.redBright(`服务启动失败: ${deleteStderr || startStderr}`));
+      process.exit(1);
+    }
+  } catch (error) {
+    spinner.fail(chalk.redBright(`服务启动失败: ${error}`));
+    process.exit(1);
+  }
+}
+
 module.exports = {
   beautyLog,
-  updateVersion
+  updateVersion,
+  verifyFile,
+  getPublishConfig,
+  getConfigFilePath,
+  onConnectServer,
+  onCollectServerInfo,
+  onRemoveFile,
+  onRestartNginx,
+  onRestartServer,
+  getConfigServerInfo,
 };
