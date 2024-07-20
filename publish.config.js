@@ -9,11 +9,11 @@ module.exports = {
     port: 22,
   },
   nginxInfo: {
-    remoteFilePath: '/usr/local/nginx/conf/nginx.conf',
-    restartPath: '/usr/local/nginx/sbin'
+    remoteFilePath1: '/usr/local/nginx/conf/nginx.conf',
+    restartPath1: '/usr/local/nginx/sbin'
   },
   serviceInfo: {
-    restartPath: '/usr/local/server'
+    restartPath1: '/usr/local/server'
   },
   porjectInfo: {
     dnhyxc: {

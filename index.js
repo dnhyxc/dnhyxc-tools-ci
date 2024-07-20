@@ -62,6 +62,7 @@ program
   .option('-p, --port [port]', '输入端口号')
   .option('-u, --username [username]', '输入用户名')
   .option('-m, --password [password]', '输入密码')
+  .option('-ncp, --nginxRemoteFilePath [nginxRemoteFilePath]', '输入服务器 nginx.conf 文件路径')
   .action(pullNginxConfCallback);
 
 program
@@ -71,6 +72,8 @@ program
   .option('-p, --port [port]', '输入端口号')
   .option('-u, --username [username]', '输入用户名')
   .option('-m, --password [password]', '输入密码')
+  .option('-ncp, --nginxRemoteFilePath [nginxRemoteFilePath]', '输入服务器 nginx.conf 文件路径')
+  .option('-nrp, --nginxRestartPath [nginxRestartPath]', '输入服务器 nginx 重启路径')
   .action(pushNginxConfCallback);
 
 program
@@ -80,6 +83,9 @@ program
   .option('-p, --port [port]', '输入端口号')
   .option('-u, --username [username]', '输入用户名')
   .option('-m, --password [password]', '输入密码')
+  .option('-ncp, --nginxRemoteFilePath [nginxRemoteFilePath]', '输入服务器 nginx.conf 文件路径')
+  .option('-nrp, --nginxRestartPath [nginxRestartPath]', '输入服务器 nginx 重启路径')
+  .option('-srp, --serviceRestartPath [serviceRestartPath]', '输入服务器 node 重启路径')
   .action((serviceName, option) => {
     const validatedServiceName = validateServiceName(serviceName);
     restartCallback(validatedServiceName, option);

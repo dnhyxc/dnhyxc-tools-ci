@@ -63,6 +63,13 @@ const updateVersion = (version) => {
   return `${major}.${minor}.${patch}`;
 };
 
+// 判断是否是合格的文件路径
+const isValidFilePath = (path) => {
+  // 使用正则表达式检查路径格式
+  const regex = /^\/(?:[^/]+\/)*[^/]+$/;
+  return regex.test(path);
+}
+
 // 校验文件是否存在
 const verifyFile = (path) => {
   return fs.existsSync(path);
@@ -101,11 +108,11 @@ const onConnectServer = async ({ host, port, username, password, ssh }) => {
 }
 
 // 获取配置信息
-const getConfigServerInfo = (publishConfig, field) => {
-  if (publishConfig?.serverInfo?.[field]) {
-    return publishConfig?.serverInfo?.[field];
+const getConfigServerInfo = (publishConfig, configType, field, message) => {
+  if (publishConfig?.[configType]?.[field]) {
+    return publishConfig?.[configType]?.[field];
   } else {
-    console.log('\n' + beautyLog.warning, chalk.yellowBright(`未找到项目 ${chalk.cyan(field)} 的配置信息，请手动输入!\n`));
+    message && console.log('\n' + beautyLog.warning, chalk.yellowBright(`未找到项目 ${chalk.cyan(configType)}.${chalk.cyan(field)} 的配置信息，请手动输入!\n`));
     return undefined;
   }
 }
@@ -124,26 +131,44 @@ const getConfigFilePath = (publishConfig, projectName, field) => {
 };
 
 // 收集服务器信息
-const onCollectServerInfo = async ({ host, port, username, password, publishConfig }) => {
+const onCollectServerInfo = async ({ host, port, username, password, projectName, publishConfig, command, nginxRemoteFilePath, nginxRestartPath, serviceRestartPath }) => {
   try {
     result = await prompts([{
       name: 'host',
-      type: host || getConfigServerInfo(publishConfig, 'host') ? null : 'text',
+      type: host || getConfigServerInfo(publishConfig, 'serverInfo', 'host', true) ? null : 'text',
       message: 'host:',
-      initial: getConfigServerInfo(publishConfig, 'host') || '',
+      initial: getConfigServerInfo(publishConfig, 'serverInfo', 'host') || '',
       validate: value => value ? true : '请输入host'
     }, {
       name: 'port',
-      type: port || getConfigServerInfo(publishConfig, 'port') ? null : 'text',
+      type: port || getConfigServerInfo(publishConfig, 'serverInfo', 'port', true) ? null : 'text',
       message: '端口号:',
-      initial: getConfigServerInfo(publishConfig, 'port') || '',
+      initial: getConfigServerInfo(publishConfig, 'serverInfo', 'port') || '',
       validate: value => value ? true : '请输入端口号'
     }, {
       name: 'username',
-      type: username || getConfigServerInfo(publishConfig, 'username') ? null : 'text',
+      type: username || getConfigServerInfo(publishConfig, 'serverInfo', 'username', true) ? null : 'text',
       message: '用户名称:',
-      initial: getConfigServerInfo(publishConfig, 'username') || '',
+      initial: getConfigServerInfo(publishConfig, 'serverInfo', 'username') || '',
       validate: value => value ? true : '请输入用户名称'
+    }, {
+      name: 'nginxRemoteFilePath',
+      type: nginxRemoteFilePath || getConfigServerInfo(publishConfig, 'nginxInfo', 'remoteFilePath', projectName !== 'node') || projectName === 'node' ? null : 'text',
+      message: '服务器 nginx.conf 文件路径:',
+      initial: getConfigServerInfo(publishConfig, 'nginxInfo', 'remoteFilePath') || '',
+      validate: value => isValidFilePath(value) ? true : '输入的服务器 nginx.conf 文件路径必须以 / 开头'
+    }, {
+      name: 'nginxRestartPath',
+      type: (nginxRestartPath || getConfigServerInfo(publishConfig, 'nginxInfo', 'restartPath', command !== 'pull' || projectName === 'nginx') || (!nginxRestartPath && !getConfigServerInfo(publishConfig, 'nginxInfo', 'restartPath') && command === 'pull')) || projectName === 'node' ? null : 'text',
+      message: '服务器 nginx 重启路径:',
+      initial: getConfigServerInfo(publishConfig, 'nginxInfo', 'restartPath') || '',
+      validate: value => isValidFilePath(value) ? true : '输入的服务器 nginx 重启路径必须以 / 开头'
+    }, {
+      name: 'serviceRestartPath',
+      type: ((serviceRestartPath || getConfigServerInfo(publishConfig, 'serviceInfo', 'restartPath', command === 'restart' && projectName === 'node') || (!serviceRestartPath && !getConfigServerInfo(publishConfig, 'serviceInfo', 'restartPath') && (command !== 'restart')))) || projectName === 'nginx' ? null : 'text',
+      message: '服务器 node 重启路径:',
+      initial: getConfigServerInfo(publishConfig, 'serviceInfo', 'restartPath') || '',
+      validate: value => isValidFilePath(value) ? true : '输入的服务器 node 重启路径必须以 / 开头'
     }, {
       name: 'password',
       type: password ? null : 'password',
@@ -156,7 +181,8 @@ const onCollectServerInfo = async ({ host, port, username, password, publishConf
       }
     });
     return result;
-  } catch (cancelled) {
+  } catch (err) {
+    console.log(beautyLog.error, chalk.red(err));
     process.exit(1);
   }
 }
@@ -185,13 +211,28 @@ const onRemoveFile = async (localFile) => {
   })
 };
 
+// 校验nginx文件是否有效
+const onCheckNginxConfig = async (remoteFilePath, restartPath, ssh) => {
+  const spinner = ora({
+    text: chalk.yellowBright(`正在检查服务器 ${remoteFilePath} 文件是否有效`)
+  }).start();
+  try {
+    const res = await ssh.execCommand(`cd ${restartPath} && ./nginx -t -c ${remoteFilePath}`);
+    console.log(res);
+    spinner.succeed(chalk.greenBright(`nginx 文件: ${chalk.cyan(remoteFilePath)} 配置无误`));
+  } catch (error) {
+    spinner.fail(chalk.redBright(`nginx 文件: ${chalk.cyan(remoteFilePath)} 校验失败`));
+    process.exit(0);
+  }
+};
+
 // 重启 nginx 服务
-const onRestartNginx = async (publishConfig, ssh) => {
+const onRestartNginx = async (remoteFilePath, restartPath, ssh) => {
+  await onCheckNginxConfig(remoteFilePath, restartPath, ssh);
   const spinner = ora({
     text: chalk.yellowBright('正在推送 nginx.conf 文件到远程服务器并重启远程 nginx 服务'),
   }).start();
   try {
-    const { restartPath } = publishConfig.nginxInfo;
     await ssh.execCommand(`cd ${restartPath} && ./nginx -s reload`);
     spinner.succeed(chalk.greenBright(chalk.bold(` 🎉 🎉 🎉 nginx 服务重启成功: ${chalk.cyan(`${restartPath}`)}!!! 🎉 🎉 🎉 \n`)));
   } catch (error) {
@@ -226,6 +267,7 @@ module.exports = {
   beautyLog,
   updateVersion,
   verifyFile,
+  isValidFilePath,
   getPublishConfig,
   getConfigFilePath,
   onConnectServer,

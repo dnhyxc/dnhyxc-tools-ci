@@ -219,15 +219,15 @@ const init = async (projectName, option) => {
   try {
     result = await prompts([{
       name: 'host',
-      type: _host || getConfigServerInfo(publishConfig, 'host') ? null : 'text',
+      type: _host || getConfigServerInfo(publishConfig, 'serverInfo', 'host') ? null : 'text',
       message: 'host:',
-      initial: getConfigServerInfo(publishConfig, 'host') || '',
+      initial: getConfigServerInfo(publishConfig, 'serverInfo', 'host') || '',
       validate: value => value ? true : '请输入host'
     }, {
       name: 'port',
-      type: _port || getConfigServerInfo(publishConfig, 'port') ? null : 'text',
+      type: _port || getConfigServerInfo(publishConfig, 'serverInfo', 'port') ? null : 'text',
       message: '端口号:',
-      initial: getConfigServerInfo(publishConfig, 'port') || '',
+      initial: getConfigServerInfo(publishConfig, 'serverInfo', 'port') || '',
       validate: value => value ? true : '请输入端口号'
     }, {
       name: 'localFilePath',
@@ -257,9 +257,9 @@ const init = async (projectName, option) => {
       inactive: 'no',
     }, {
       name: 'username',
-      type: _username || getConfigServerInfo(publishConfig, 'username') ? null : 'text',
+      type: _username || getConfigServerInfo(publishConfig, 'serverInfo', 'username') ? null : 'text',
       message: '用户名称:',
-      initial: getConfigServerInfo(publishConfig, 'username') || '',
+      initial: getConfigServerInfo(publishConfig, 'serverInfo', 'username') || '',
       validate: value => value ? true : '请输入用户名称'
     }, {
       name: 'password',
@@ -286,9 +286,9 @@ const init = async (projectName, option) => {
   }
 
   await onPublish({
-    host: host || _host || getConfigServerInfo(publishConfig, 'host'),
-    port: port || _port || getConfigServerInfo(publishConfig, 'port'),
-    username: username || _username || getConfigServerInfo(publishConfig, 'username'),
+    host: host || _host || getConfigServerInfo(publishConfig, 'serverInfo', 'host'),
+    port: port || _port || getConfigServerInfo(publishConfig, 'serverInfo', 'port'),
+    username: username || _username || getConfigServerInfo(publishConfig, 'serverInfo', 'username'),
     password: password || _password,
     localFilePath: localFilePath || _localFilePath || getConfigFilePath(publishConfig, projectName, 'localFilePath'),
     remoteFilePath: remoteFilePath || _remoteFilePath || getConfigFilePath(publishConfig, projectName, 'remoteFilePath'),
